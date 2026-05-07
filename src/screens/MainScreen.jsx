@@ -31,6 +31,26 @@ const S = {
   FAREWELL:  'farewell',
 };
 
+function buildGreeting(name, lang) {
+  const hour = new Date().getHours();
+
+  if (lang === 'ru') {
+    let salutation;
+    if      (hour >= 4  && hour < 11) salutation = 'Доброе утро';
+    else if (hour >= 11 && hour < 16) salutation = 'Добрый день';
+    else if (hour >= 16 && hour < 22) salutation = 'Добрый вечер';
+    else                              salutation = 'Доброй ночи';
+    return `${salutation}, ${name}! Как вы себя чувствуете сегодня, ${name}?`;
+  } else {
+    let salutation;
+    if      (hour >= 4  && hour < 11) salutation = 'בוקר טוב';
+    else if (hour >= 11 && hour < 16) salutation = 'צהריים טובים';
+    else if (hour >= 16 && hour < 22) salutation = 'ערב טוב';
+    else                              salutation = 'לילה טוב';
+    return `${salutation}, ${name}! איך אתה מרגיש היום?`;
+  }
+}
+
 export default function MainScreen({ name, language, modelKey, onOpenSettings }) {
   const [sessionState, setSessionState]   = useState(S.IDLE);
   const [errorMessage, setErrorMessage]   = useState('');
@@ -197,9 +217,7 @@ export default function MainScreen({ name, language, modelKey, onOpenSettings })
 
     const lang = langRef.current;
     const n    = nameRef.current;
-    const greeting = lang === 'ru'
-      ? `Добрый день, ${n}! Как вы себя чувствуете сегодня, ${n}?`
-      : `שלום ${n}! איך אתה מרגיש היום?`;
+    const greeting = buildGreeting(n, lang);
 
     conversationRef.current.push({ role: 'assistant', content: greeting });
     updateState(S.GREETING);
