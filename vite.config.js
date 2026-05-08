@@ -15,9 +15,52 @@ export default defineConfig(({ mode }) => {
     plugins: [
       react(),
       devApiPlugin(env),
+      devTranscribePlugin(env),
     ],
   };
 });
+
+// ── Dev-only plugin: handles POST /api/transcribe locally ───────────────────
+function devTranscribePlugin(env) {
+  return {
+    name: 'dev-transcribe',
+    apply: 'serve',
+    configureServer(server) {
+      server.middlewares.use('/api/transcribe', async (req, res) => {
+        if (req.method !== 'POST') { res.writeHead(405); res.end(); return; }
+
+        const apiKey = env.DEAR_FRIEND_OPENAI_KEY;
+        if (!apiKey) {
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'DEAR_FRIEND_OPENAI_KEY not set in .env' }));
+          return;
+        }
+
+        const chunks = [];
+        req.on('data', c => chunks.push(c));
+        req.on('end', async () => {
+          const { audio, language } = JSON.parse(Buffer.concat(chunks).toString('utf-8'));
+          const audioBuffer = Buffer.from(audio, 'base64');
+          const blob = new Blob([audioBuffer], { type: 'audio/webm' });
+          const form = new FormData();
+          form.append('file', blob, 'audio.webm');
+          form.append('model', 'whisper-1');
+          if (language) form.append('language', language);
+
+          const upstream = await fetch('https://api.openai.com/v1/audio/transcriptions', {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${apiKey}` },
+            body: form,
+          });
+          const data = await upstream.json();
+          console.log(`[dev-transcribe] ✓ "${data.text?.slice(0, 60)}"`);
+          res.writeHead(upstream.ok ? 200 : 502, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify(upstream.ok ? { text: data.text || '' } : { error: data.error?.message }));
+        });
+      });
+    },
+  };
+}
 
 // ── Dev-only plugin: handles POST /api/chat locally ─────────────────────────
 // In production this route is handled by functions/chat.js via netlify.toml redirect.

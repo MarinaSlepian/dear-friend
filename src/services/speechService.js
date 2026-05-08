@@ -1,64 +1,146 @@
-// ── SpeechRecognition ─────────────────────────────────────────────────────
+// ── Speech-to-text via MediaRecorder + OpenAI Whisper ────────────────────
+// Replaces browser SpeechRecognition (which fails with `network` errors on
+// production HTTPS due to Chrome routing audio through Google's servers).
 
-const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+export const isSpeechRecognitionSupported = () =>
+  Boolean(navigator.mediaDevices?.getUserMedia && window.MediaRecorder);
 
-// Pre-warm voice cache before any user interaction to avoid breaking the
-// browser's user-gesture requirement when speak() awaits loadVoices().
-export function preloadVoices() {
-  if (window.speechSynthesis) loadVoices();
-}
+let activeSession = null;
 
-export const isSpeechRecognitionSupported = () => Boolean(SR);
-
-let activeRecognition = null;
-
-export function startListening({ language, onResult, onError, onEnd }) {
-  if (!SR) { onError?.('not-supported'); return; }
-
+export async function startListening({ language, onResult, onError, onEnd }) {
   stopListening();
 
-  const rec = new SR();
-  rec.lang = language === 'he' ? 'he-IL' : 'ru-RU';
-  rec.continuous = false;
-  rec.interimResults = false;
-  rec.maxAlternatives = 1;
-
-  rec.onresult = e => {
-    const transcript = e.results[0]?.[0]?.transcript?.trim();
-    if (transcript) onResult?.(transcript);
-  };
-
-  rec.onerror = e => {
-    // Don't null activeRecognition here — onend always fires after onerror
-    // and handleRecognitionEnd is the single place that restarts listening.
-    // Nulling here + restarting in onerror causes a double-restart loop.
-    onError?.(e.error);
-  };
-
-  rec.onend = () => {
-    activeRecognition = null;
-    onEnd?.();
-  };
-
-  activeRecognition = rec;
+  let stream;
   try {
-    rec.start();
-  } catch (e) {
-    activeRecognition = null;
-    onError?.(e.message);
+    stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+  } catch {
+    onError?.('not-allowed');
+    onEnd?.();
+    return;
   }
+
+  const langCode = language === 'he' ? 'he' : 'ru';
+  const mimeType = getSupportedMimeType();
+
+  const audioCtx = new AudioContext();
+  const source   = audioCtx.createMediaStreamSource(stream);
+  const analyser = audioCtx.createAnalyser();
+  analyser.fftSize = 1024;
+  analyser.smoothingTimeConstant = 0.85;
+  source.connect(analyser);
+
+  const freqData = new Uint8Array(analyser.frequencyBinCount);
+
+  let isActive      = true;
+  let speaking      = false;
+  let silenceTimer  = null;
+  let recorder      = null;
+  let chunks        = [];
+
+  function startRecording() {
+    chunks   = [];
+    recorder = new MediaRecorder(stream, mimeType ? { mimeType } : {});
+    recorder.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data); };
+    recorder.onstop = () => {
+      if (!isActive || chunks.length === 0) return;
+      submitAudio(chunks, mimeType, langCode, onResult, onError, onEnd);
+    };
+    recorder.start(100);
+    speaking = true;
+  }
+
+  function stopRecording() {
+    speaking = false;
+    clearTimeout(silenceTimer);
+    if (recorder?.state === 'recording') recorder.stop();
+  }
+
+  const SPEECH_THRESHOLD = 15;  // out of 255 average frequency amplitude
+  const SILENCE_MS       = 1500; // ms of quiet before phrase ends
+
+  const vadInterval = setInterval(() => {
+    if (!isActive) return;
+    analyser.getByteFrequencyData(freqData);
+    const avg = freqData.reduce((a, b) => a + b, 0) / freqData.length;
+
+    if (avg > SPEECH_THRESHOLD) {
+      if (!speaking) startRecording();
+      clearTimeout(silenceTimer);
+      silenceTimer = setTimeout(() => {
+        if (speaking && isActive) stopRecording();
+      }, SILENCE_MS);
+    }
+  }, 80);
+
+  activeSession = {
+    stop() {
+      isActive = false;
+      clearInterval(vadInterval);
+      clearTimeout(silenceTimer);
+      try { if (recorder?.state === 'recording') recorder.stop(); } catch {}
+      try { stream.getTracks().forEach(t => t.stop()); } catch {}
+      try { audioCtx.close(); } catch {}
+    },
+  };
 }
 
 export function stopListening() {
-  if (activeRecognition) {
-    try { activeRecognition.abort(); } catch {}
-    activeRecognition = null;
+  if (activeSession) {
+    activeSession.stop();
+    activeSession = null;
   }
 }
 
-// ── SpeechSynthesis ───────────────────────────────────────────────────────
+async function submitAudio(chunks, mimeType, language, onResult, onError, onEnd) {
+  const blob   = new Blob(chunks, { type: mimeType || 'audio/webm' });
+  const base64 = await blobToBase64(blob);
+  const audio  = base64.split(',')[1];
+
+  try {
+    const res = await fetch('/api/transcribe', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ audio, language }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+    const text = data.text?.trim();
+    console.log('[STT] transcript:', text || '(empty)');
+    if (text) onResult(text);
+    // Empty result = background noise; VAD loop continues silently
+  } catch (err) {
+    console.error('[STT] error:', err.message);
+    onError?.(err.message);
+    onEnd?.();
+  }
+}
+
+function getSupportedMimeType() {
+  const types = [
+    'audio/webm;codecs=opus',
+    'audio/webm',
+    'audio/ogg;codecs=opus',
+    'audio/mp4',
+  ];
+  return types.find(t => MediaRecorder.isTypeSupported(t)) || '';
+}
+
+function blobToBase64(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload  = () => resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
+}
+
+// ── SpeechSynthesis (TTS) ─────────────────────────────────────────────────
 
 let voicesCache = null;
+
+export function preloadVoices() {
+  if (window.speechSynthesis) loadVoices();
+}
 
 function loadVoices() {
   return new Promise(resolve => {
@@ -77,36 +159,24 @@ function pickVoice(voices, language) {
   const langCode   = language === 'he' ? 'he-IL' : 'ru-RU';
   const langPrefix = language === 'he' ? 'he'    : 'ru';
 
-  // Narrow to voices for this language
   const pool = voices.filter(
     v => v.lang === langCode || v.lang.toLowerCase().startsWith(langPrefix)
   );
   if (pool.length === 0) return null;
 
-  // 1. Google neural voices — best quality, available in Chrome
-  //    e.g. "Google русский", "Google עברית"
   const google = pool.find(v => v.name.toLowerCase().includes('google'));
   if (google) return google;
 
-  // 2. Any cloud/online voice (localService === false means it streams from the OS cloud)
   const online = pool.find(v => v.localService === false);
   if (online) return online;
 
-  // 3. Known high-quality named voices
   const preferred = language === 'he'
-    ? ['tamar', 'carmit', 'yoav', 'meital']          // macOS Hebrew neural voices
-    : ['milena', 'irina', 'katya', 'svetlana', 'александра', 'алена'];  // macOS / Win
-  const named = pool.find(v =>
-    preferred.some(n => v.name.toLowerCase().includes(n))
-  );
+    ? ['tamar', 'carmit', 'yoav', 'meital']
+    : ['milena', 'irina', 'katya', 'svetlana', 'александра', 'алена'];
+  const named = pool.find(v => preferred.some(n => v.name.toLowerCase().includes(n)));
   if (named) return named;
 
-  // 4. Exact language-code match
-  const exact = pool.find(v => v.lang === langCode);
-  if (exact) return exact;
-
-  // 5. Any available voice for this language
-  return pool[0];
+  return pool.find(v => v.lang === langCode) ?? pool[0];
 }
 
 export async function speak({ text, language, onEnd, onError }) {
@@ -114,12 +184,11 @@ export async function speak({ text, language, onEnd, onError }) {
 
   window.speechSynthesis.cancel();
 
-  const voices = voicesCache ?? await loadVoices();
-
+  const voices    = voicesCache ?? await loadVoices();
   const utterance = new SpeechSynthesisUtterance(text);
   utterance.lang   = language === 'he' ? 'he-IL' : 'ru-RU';
-  utterance.rate   = 0.82;   // slightly slower = more relaxed, less robotic
-  utterance.pitch  = 0.95;   // just below neutral — warmer, less clipped
+  utterance.rate   = 0.82;
+  utterance.pitch  = 0.95;
   utterance.volume = 1.0;
 
   const voice = pickVoice(voices, language);
@@ -130,13 +199,11 @@ export async function speak({ text, language, onEnd, onError }) {
     console.warn('[TTS] no matching voice found, using browser default');
   }
 
-  // Chrome stops synthesis after ~15s — periodic resume() works around it
   const resumeTimer = setInterval(() => {
     if (window.speechSynthesis.paused) window.speechSynthesis.resume();
   }, 8000);
 
-  // Safety net: if onend never fires (known Chrome bug), unblock the session
-  const wordCount = text.split(/\s+/).length;
+  const wordCount  = text.split(/\s+/).length;
   const fallbackMs = Math.max(15000, wordCount * 700);
   let ended = false;
   const fallbackTimer = setTimeout(() => {
@@ -155,10 +222,7 @@ export async function speak({ text, language, onEnd, onError }) {
     ended = true;
     clearInterval(resumeTimer);
     clearTimeout(fallbackTimer);
-    if (e.error !== 'interrupted' && e.error !== 'canceled') {
-      onError?.(e.error);
-    }
-    // Always call onEnd so the session can continue
+    if (e.error !== 'interrupted' && e.error !== 'canceled') onError?.(e.error);
     onEnd?.();
   };
 
