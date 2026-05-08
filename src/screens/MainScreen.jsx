@@ -57,6 +57,7 @@ export default function MainScreen({ name, language, modelKey, onOpenSettings })
   const [errorMessage, setErrorMessage]   = useState('');
   const [noSpeechSupport, setNoSupport]   = useState(false);
   const [btnHovered, setBtnHovered]       = useState(false);
+  const [lastTranscript, setLastTranscript] = useState('');
 
   // Refs hold latest values accessible inside callbacks without stale closure issues
   const sessionActiveRef  = useRef(false);
@@ -102,6 +103,7 @@ export default function MainScreen({ name, language, modelKey, onOpenSettings })
 
   const beginListening = useCallback(() => {
     if (!sessionActiveRef.current) return;
+    console.log('[speech] startListening lang:', langRef.current);
     updateState(S.LISTENING);
     startListening({
       language: langRef.current,
@@ -113,6 +115,7 @@ export default function MainScreen({ name, language, modelKey, onOpenSettings })
 
   function handleSpeechError(error) {
     if (!sessionActiveRef.current) return;
+    console.log('[speech] error:', error);
     if (error === 'no-speech' || error === 'aborted') {
       // onend always fires after onerror — handleRecognitionEnd restarts listening.
       // Don't also restart here or we get a double-restart abort loop.
@@ -137,6 +140,9 @@ export default function MainScreen({ name, language, modelKey, onOpenSettings })
 
   async function handleTranscript(text) {
     if (!sessionActiveRef.current) return;
+    console.log('[speech] transcript:', text);
+    setLastTranscript(text);
+    setTimeout(() => setLastTranscript(''), 4000);
     processingRef.current = true;
     updateState(S.THINKING);
     stopListening();
@@ -353,6 +359,11 @@ export default function MainScreen({ name, language, modelKey, onOpenSettings })
           <p style={styles.hint}>{strings.tap_to_end}</p>
         )}
 
+        {/* Show recognized transcript briefly for debugging */}
+        {lastTranscript ? (
+          <p style={styles.transcript}>"{lastTranscript}"</p>
+        ) : null}
+
         {/* Error message */}
         {errorMessage && (
           <div style={styles.errorBox}>
@@ -471,6 +482,13 @@ const styles = {
     fontSize:   SIZES.mediumFont,
     color:      '#7A6020',
     lineHeight: 1.5,
+  },
+  transcript: {
+    fontSize:   SIZES.smallFont,
+    color:      COLORS.textMuted,
+    textAlign:  'center',
+    fontStyle:  'italic',
+    maxWidth:   340,
   },
   errorBox: {
     backgroundColor: COLORS.errorBg,
