@@ -4,6 +4,7 @@ import { STRINGS } from '../constants/strings.js';
 import { sendMessage } from '../services/aiService.js';
 import {
   isSpeechRecognitionSupported,
+  preloadVoices,
   startListening,
   stopListening,
   speak,
@@ -73,6 +74,7 @@ export default function MainScreen({ name, language, modelKey, onOpenSettings })
 
   useEffect(() => {
     if (!isSpeechRecognitionSupported()) setNoSupport(true);
+    preloadVoices();
 
     startReminderChecker(
       () => nameRef.current,
@@ -112,8 +114,8 @@ export default function MainScreen({ name, language, modelKey, onOpenSettings })
   function handleSpeechError(error) {
     if (!sessionActiveRef.current) return;
     if (error === 'no-speech' || error === 'aborted') {
-      // Restart silently
-      if (sessionStateRef.current === S.LISTENING) setTimeout(beginListening, 400);
+      // onend always fires after onerror — handleRecognitionEnd restarts listening.
+      // Don't also restart here or we get a double-restart abort loop.
       return;
     }
     if (error === 'not-allowed' || error === 'service-not-allowed') {
@@ -121,8 +123,7 @@ export default function MainScreen({ name, language, modelKey, onOpenSettings })
       endSession();
       return;
     }
-    // Other errors — restart
-    if (sessionStateRef.current === S.LISTENING) setTimeout(beginListening, 600);
+    // Other errors — let onend / handleRecognitionEnd restart
   }
 
   function handleRecognitionEnd() {

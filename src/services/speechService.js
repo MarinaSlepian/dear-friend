@@ -2,6 +2,12 @@
 
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 
+// Pre-warm voice cache before any user interaction to avoid breaking the
+// browser's user-gesture requirement when speak() awaits loadVoices().
+export function preloadVoices() {
+  if (window.speechSynthesis) loadVoices();
+}
+
 export const isSpeechRecognitionSupported = () => Boolean(SR);
 
 let activeRecognition = null;
@@ -23,7 +29,9 @@ export function startListening({ language, onResult, onError, onEnd }) {
   };
 
   rec.onerror = e => {
-    activeRecognition = null;
+    // Don't null activeRecognition here — onend always fires after onerror
+    // and handleRecognitionEnd is the single place that restarts listening.
+    // Nulling here + restarting in onerror causes a double-restart loop.
     onError?.(e.error);
   };
 
@@ -127,12 +135,26 @@ export async function speak({ text, language, onEnd, onError }) {
     if (window.speechSynthesis.paused) window.speechSynthesis.resume();
   }, 8000);
 
+  // Safety net: if onend never fires (known Chrome bug), unblock the session
+  const wordCount = text.split(/\s+/).length;
+  const fallbackMs = Math.max(15000, wordCount * 700);
+  let ended = false;
+  const fallbackTimer = setTimeout(() => {
+    if (!ended) { ended = true; clearInterval(resumeTimer); onEnd?.(); }
+  }, fallbackMs);
+
   utterance.onend = () => {
+    if (ended) return;
+    ended = true;
     clearInterval(resumeTimer);
+    clearTimeout(fallbackTimer);
     onEnd?.();
   };
   utterance.onerror = e => {
+    if (ended) return;
+    ended = true;
     clearInterval(resumeTimer);
+    clearTimeout(fallbackTimer);
     if (e.error !== 'interrupted' && e.error !== 'canceled') {
       onError?.(e.error);
     }
