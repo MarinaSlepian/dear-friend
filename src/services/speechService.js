@@ -7,7 +7,7 @@ export const isSpeechRecognitionSupported = () =>
 
 let activeSession = null;
 
-export async function startListening({ language, onResult, onError, onEnd }) {
+export async function startListening({ language, onResult, onError, onEnd, onSpeechStart }) {
   stopListening();
 
   let stream;
@@ -56,7 +56,7 @@ export async function startListening({ language, onResult, onError, onEnd }) {
   }
 
   const SPEECH_THRESHOLD = 15;  // out of 255 average frequency amplitude
-  const SILENCE_MS       = 1500; // ms of quiet before phrase ends
+  const SILENCE_MS       = 800;  // ms of quiet before phrase ends
 
   const vadInterval = setInterval(() => {
     if (!isActive) return;
@@ -64,7 +64,10 @@ export async function startListening({ language, onResult, onError, onEnd }) {
     const avg = freqData.reduce((a, b) => a + b, 0) / freqData.length;
 
     if (avg > SPEECH_THRESHOLD) {
-      if (!speaking) startRecording();
+      if (!speaking) {
+        startRecording();
+        onSpeechStart?.();
+      }
       clearTimeout(silenceTimer);
       silenceTimer = setTimeout(() => {
         if (speaking && isActive) stopRecording();

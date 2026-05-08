@@ -24,12 +24,13 @@ import {
 
 // ── Session state machine ────────────────────────────────────────────────────
 const S = {
-  IDLE:      'idle',
-  GREETING:  'greeting',
-  LISTENING: 'listening',
-  THINKING:  'thinking',
-  SPEAKING:  'speaking',
-  FAREWELL:  'farewell',
+  IDLE:       'idle',
+  GREETING:   'greeting',
+  LISTENING:  'listening',
+  PROCESSING: 'processing', // VAD detected speech, waiting for Whisper
+  THINKING:   'thinking',   // Whisper done, waiting for AI
+  SPEAKING:   'speaking',
+  FAREWELL:   'farewell',
 };
 
 function buildGreeting(name, lang) {
@@ -106,10 +107,11 @@ export default function MainScreen({ name, language, modelKey, onOpenSettings })
     console.log('[speech] startListening lang:', langRef.current);
     updateState(S.LISTENING);
     startListening({
-      language: langRef.current,
-      onResult: handleTranscript,
-      onError:  handleSpeechError,
-      onEnd:    handleRecognitionEnd,
+      language:      langRef.current,
+      onResult:      handleTranscript,
+      onError:       handleSpeechError,
+      onEnd:         handleRecognitionEnd,
+      onSpeechStart: () => { if (sessionActiveRef.current) updateState(S.PROCESSING); },
     });
   }, []);
 
@@ -270,7 +272,7 @@ export default function MainScreen({ name, language, modelKey, onOpenSettings })
     unlockAudio(); // satisfy browser's "user gesture required" policy for AudioContext
     if (sessionState === S.IDLE) {
       startSession();
-    } else if (sessionState === S.LISTENING || sessionState === S.SPEAKING || sessionState === S.THINKING) {
+    } else if (sessionState === S.LISTENING || sessionState === S.PROCESSING || sessionState === S.SPEAKING || sessionState === S.THINKING) {
       endSession();
     }
     // GREETING and FAREWELL: ignore (button disabled)
@@ -279,25 +281,26 @@ export default function MainScreen({ name, language, modelKey, onOpenSettings })
   // ── Derived display values ─────────────────────────────────────────────────
 
   const strings = STRINGS[language];
-  const isDisabled = sessionState === S.GREETING || sessionState === S.FAREWELL;
-  const isSpeaking = sessionState === S.SPEAKING || sessionState === S.GREETING || sessionState === S.FAREWELL;
+  const isDisabled  = sessionState === S.GREETING || sessionState === S.FAREWELL;
+  const isSpeaking  = sessionState === S.SPEAKING || sessionState === S.GREETING || sessionState === S.FAREWELL;
   const isListening = sessionState === S.LISTENING;
   const isActive    = sessionState !== S.IDLE && sessionState !== S.FAREWELL;
 
   function getLabel() {
     switch (sessionState) {
-      case S.LISTENING: return strings.btn_listening;
-      case S.THINKING:  return strings.btn_thinking;
+      case S.LISTENING:   return strings.btn_listening;
+      case S.PROCESSING:
+      case S.THINKING:    return strings.btn_thinking;
       case S.SPEAKING:
-      case S.GREETING:  return strings.btn_speaking;
-      case S.FAREWELL:  return strings.btn_farewell;
-      default:          return strings.btn_idle;
+      case S.GREETING:    return strings.btn_speaking;
+      case S.FAREWELL:    return strings.btn_farewell;
+      default:            return strings.btn_idle;
     }
   }
 
   function getBtnColor() {
     if (isSpeaking)              return COLORS.buttonSpeaking;
-    if (sessionState === S.THINKING) return COLORS.buttonThinking;
+    if (sessionState === S.THINKING || sessionState === S.PROCESSING) return COLORS.buttonThinking;
     if (isActive)                return COLORS.buttonActive;
     return btnHovered ? COLORS.buttonHover : COLORS.buttonIdle;
   }
