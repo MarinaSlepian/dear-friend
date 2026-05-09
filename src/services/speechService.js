@@ -56,7 +56,7 @@ export async function startListening({ language, onResult, onError, onEnd, onSpe
   }
 
   const SPEECH_THRESHOLD = 15;  // out of 255 average frequency amplitude
-  const SILENCE_MS       = 800;  // ms of quiet before phrase ends
+  const SILENCE_MS       = 200;  // ms of quiet before phrase ends
 
   const vadInterval = setInterval(() => {
     if (!isActive) return;
