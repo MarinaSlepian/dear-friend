@@ -33,8 +33,35 @@ const S = {
   FAREWELL:   'farewell',
 };
 
+const GREETING_QUESTIONS = {
+  ru: [
+    'Как вы себя чувствуете сегодня?',
+    'Как вы поживаете?',
+    'Что нового сегодня?',
+    'Что вас беспокоит сегодня?',
+    'Расскажите, как у вас дела?',
+    'О чём вы думаете сегодня?',
+    'Что вас радует сегодня?',
+    'Как прошёл ваш день?',
+    'Есть ли что-то, о чём хотите поговорить?',
+  ],
+  he: [
+    'איך אתה מרגיש היום?',
+    'מה שלומך היום?',
+    'מה חדש אצלך?',
+    'מה מטריד אותך היום?',
+    'ספר לי, איך העניינים?',
+    'על מה אתה חושב היום?',
+    'מה משמח אותך היום?',
+    'יש משהו שתרצה לשתף איתי?',
+    'איך עבר עליך היום?',
+  ],
+};
+
 function buildGreeting(name, lang) {
   const hour = new Date().getHours();
+  const questions = GREETING_QUESTIONS[lang] ?? GREETING_QUESTIONS.ru;
+  const question  = questions[Math.floor(Math.random() * questions.length)];
 
   if (lang === 'ru') {
     let salutation;
@@ -42,14 +69,14 @@ function buildGreeting(name, lang) {
     else if (hour >= 11 && hour < 16) salutation = 'Добрый день';
     else if (hour >= 16 && hour < 22) salutation = 'Добрый вечер';
     else                              salutation = 'Доброй ночи';
-    return `${salutation}, ${name}! Как вы себя чувствуете сегодня, ${name}?`;
+    return `${salutation}, ${name}! ${question}`;
   } else {
     let salutation;
     if      (hour >= 4  && hour < 11) salutation = 'בוקר טוב';
     else if (hour >= 11 && hour < 16) salutation = 'צהריים טובים';
     else if (hour >= 16 && hour < 22) salutation = 'ערב טוב';
     else                              salutation = 'לילה טוב';
-    return `${salutation}, ${name}! איך אתה מרגיש היום?`;
+    return `${salutation}, ${name}! ${question}`;
   }
 }
 
