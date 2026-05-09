@@ -8,7 +8,31 @@ export const MODELS = {
   smart: 'claude-sonnet-4-6',
 };
 
-export async function sendMessage({ messages, name, language, modelKey }) {
+// Split accumulated text into complete sentences, returning [sentences[], remainder].
+// Handles .!?… followed by whitespace or end-of-string.
+function extractSentences(text) {
+  const sentences = [];
+  let remaining = text;
+  const re = /[.!?…]+(?=\s|$)/g;
+  let match;
+  let lastEnd = 0;
+
+  while ((match = re.exec(remaining)) !== null) {
+    const end = match.index + match[0].length;
+    const sentence = remaining.slice(lastEnd, end).trim();
+    if (sentence) sentences.push(sentence);
+    lastEnd = end;
+    // skip leading whitespace for next search
+    while (lastEnd < remaining.length && remaining[lastEnd] === ' ') lastEnd++;
+    re.lastIndex = lastEnd;
+  }
+
+  return [sentences, remaining.slice(lastEnd).trimStart()];
+}
+
+// onSentence(text) — called for each complete sentence as the stream arrives
+// onComplete(fullText) — called once when the stream ends with the full response
+export async function sendMessage({ messages, name, language, modelKey, onSentence, onComplete }) {
   const memoryContext   = buildMemoryContext(language);
   const reminders       = loadReminders();
   const remindersText   = buildRemindersText(reminders, language);
@@ -30,14 +54,59 @@ export async function sendMessage({ messages, name, language, modelKey }) {
   });
 
   if (!res.ok) {
-    // Read the error body so the real reason is visible in the browser console
     let detail = '';
     try { detail = (await res.json()).error; } catch { try { detail = await res.text(); } catch {} }
     console.error(`[aiService] HTTP ${res.status}:`, detail);
     throw new Error(`API_ERROR:${res.status}${detail ? ' — ' + detail : ''}`);
   }
 
-  const data = await res.json();
-  if (data.error) throw new Error(data.error);
-  return data.text;
+  // ── Parse Claude SSE stream ───────────────────────────────────────────────
+  const reader    = res.body.getReader();
+  const decoder   = new TextDecoder();
+  let sseBuffer   = '';
+  let textBuffer  = ''; // accumulates partial sentence
+  let fullText    = '';
+  let eventName   = '';
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    sseBuffer += decoder.decode(value, { stream: true });
+    const lines = sseBuffer.split('\n');
+    sseBuffer = lines.pop(); // keep any incomplete line
+
+    for (const line of lines) {
+      if (line.startsWith('event: ')) {
+        eventName = line.slice(7).trim();
+        continue;
+      }
+      if (!line.startsWith('data: ')) continue;
+
+      const data = line.slice(6).trim();
+      if (!data || data === '[DONE]') { eventName = ''; continue; }
+
+      try {
+        const parsed = JSON.parse(data);
+        if (eventName === 'content_block_delta' && parsed.delta?.type === 'text_delta') {
+          const chunk = parsed.delta.text || '';
+          fullText   += chunk;
+          textBuffer += chunk;
+
+          const [sentences, remainder] = extractSentences(textBuffer);
+          textBuffer = remainder;
+          for (const s of sentences) onSentence?.(s);
+        }
+      } catch {}
+
+      eventName = '';
+    }
+  }
+
+  // Flush any remaining text that didn't end with punctuation
+  const tail = textBuffer.trim();
+  if (tail) onSentence?.(tail);
+
+  if (!fullText) throw new Error('Empty response from AI');
+  onComplete?.(fullText);
 }

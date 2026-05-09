@@ -151,31 +151,52 @@ export default function MainScreen({ name, language, modelKey, onOpenSettings })
 
     conversationRef.current.push({ role: 'user', content: text });
 
+    // ── Streaming TTS queue ──────────────────────────────────────────────────
+    // Sentences arrive from the stream one by one; we start speaking the first
+    // one immediately so the user hears a response before Claude finishes.
+    const sentenceQueue = [];
+    let streamDone = false;
+    let ttsBusy    = false;
+
+    function speakNext() {
+      if (ttsBusy || !sessionActiveRef.current) return;
+      if (sentenceQueue.length === 0) {
+        if (streamDone) { processingRef.current = false; beginListening(); }
+        return;
+      }
+      ttsBusy = true;
+      updateState(S.SPEAKING);
+      const sentence = sentenceQueue.shift();
+      speak({
+        text:     sentence,
+        language: langRef.current,
+        onEnd:    () => { ttsBusy = false; speakNext(); },
+        onError:  () => { ttsBusy = false; speakNext(); },
+      });
+    }
+
     try {
-      const rawReply = await sendMessage({
+      await sendMessage({
         messages: conversationRef.current,
         name:     nameRef.current,
         language: langRef.current,
         modelKey: modelRef.current,
-      });
 
-      if (!sessionActiveRef.current) return;
+        onSentence: (sentence) => {
+          if (!sessionActiveRef.current) return;
+          const clean = stripReminderMarker(sentence).trim();
+          if (clean) { sentenceQueue.push(clean); speakNext(); }
+        },
 
-      // Extract and handle reminder command (stripped from TTS)
-      const reminderData = parseReminderFromResponse(rawReply);
-      const cleanReply   = stripReminderMarker(rawReply);
-
-      if (reminderData) await processReminderAction(reminderData);
-
-      conversationRef.current.push({ role: 'assistant', content: cleanReply });
-      processingRef.current = false;
-
-      updateState(S.SPEAKING);
-      speak({
-        text:     cleanReply,
-        language: langRef.current,
-        onEnd:    () => { if (sessionActiveRef.current) beginListening(); },
-        onError:  () => { if (sessionActiveRef.current) beginListening(); },
+        onComplete: (fullText) => {
+          if (!sessionActiveRef.current) return;
+          const reminderData = parseReminderFromResponse(fullText);
+          const cleanReply   = stripReminderMarker(fullText);
+          if (reminderData) processReminderAction(reminderData);
+          conversationRef.current.push({ role: 'assistant', content: cleanReply });
+          streamDone = true;
+          speakNext(); // if TTS already finished, this starts listening
+        },
       });
 
     } catch (err) {

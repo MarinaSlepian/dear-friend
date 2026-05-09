@@ -1,89 +1,85 @@
-// Netlify serverless function — keeps DEAR_FRIEND_API_KEY out of the browser.
-// Endpoint: POST /api/chat  (mapped via netlify.toml redirect)
+// Netlify Function v2 — streams Claude SSE directly to the client so TTS
+// can start on the first sentence while the rest of the response generates.
 
-exports.handler = async function (event) {
-  // Only allow POST
-  if (event.httpMethod !== 'POST') {
-    return { statusCode: 405, body: 'Method Not Allowed' };
+const VALID_MODELS = [
+  'claude-haiku-4-5-20251001',
+  'claude-sonnet-4-6',
+];
+
+export default async (request) => {
+  if (request.method !== 'POST') {
+    return new Response('Method Not Allowed', { status: 405 });
   }
 
   const apiKey = process.env.DEAR_FRIEND_API_KEY;
   if (!apiKey) {
-    console.error('DEAR_FRIEND_API_KEY environment variable is not set');
-    return {
-      statusCode: 500,
-      body: JSON.stringify({ error: 'Server configuration error' }),
-    };
+    return new Response(
+      JSON.stringify({ error: 'Server configuration error' }),
+      { status: 500, headers: { 'Content-Type': 'application/json' } }
+    );
   }
 
   let body;
   try {
-    body = JSON.parse(event.body || '{}');
+    body = await request.json();
   } catch {
-    return { statusCode: 400, body: JSON.stringify({ error: 'Invalid JSON' }) };
+    return new Response(
+      JSON.stringify({ error: 'Invalid JSON' }),
+      { status: 400, headers: { 'Content-Type': 'application/json' } }
+    );
   }
 
   const { messages, systemPrompt, model } = body;
   if (!messages || !systemPrompt) {
-    return { statusCode: 400, body: JSON.stringify({ error: 'Missing required fields' }) };
+    return new Response(
+      JSON.stringify({ error: 'Missing required fields' }),
+      { status: 400, headers: { 'Content-Type': 'application/json' } }
+    );
   }
 
-  const VALID_MODELS = [
-    'claude-haiku-4-5-20251001',
-    'claude-sonnet-4-6',
-  ];
   const resolvedModel = VALID_MODELS.includes(model) ? model : VALID_MODELS[0];
 
   try {
-    const response = await fetch('https://api.anthropic.com/v1/messages', {
+    const upstream = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {
-        'Content-Type':    'application/json',
-        'x-api-key':       apiKey,
+        'Content-Type':      'application/json',
+        'x-api-key':         apiKey,
         'anthropic-version': '2023-06-01',
-        'anthropic-beta':  'prompt-caching-2024-07-31',
+        'anthropic-beta':    'prompt-caching-2024-07-31',
       },
       body: JSON.stringify({
         model:      resolvedModel,
         max_tokens: 512,
-        system: [
-          {
-            type:          'text',
-            text:          systemPrompt,
-            cache_control: { type: 'ephemeral' },
-          },
-        ],
+        stream:     true,
+        system: [{ type: 'text', text: systemPrompt, cache_control: { type: 'ephemeral' } }],
         messages,
       }),
     });
 
-    if (!response.ok) {
-      const errText = await response.text().catch(() => '');
-      console.error(`Anthropic API error ${response.status}:`, errText);
-      return {
-        statusCode: 502,
-        body: JSON.stringify({ error: 'Upstream API error' }),
-      };
+    if (!upstream.ok) {
+      const errText = await upstream.text().catch(() => '');
+      console.error(`Anthropic API error ${upstream.status}:`, errText);
+      return new Response(
+        JSON.stringify({ error: 'Upstream API error' }),
+        { status: 502, headers: { 'Content-Type': 'application/json' } }
+      );
     }
 
-    const data = await response.json();
-    const text = data.content?.[0]?.text;
-
-    if (!text) {
-      return { statusCode: 502, body: JSON.stringify({ error: 'Empty response from AI' }) };
-    }
-
-    return {
-      statusCode: 200,
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text }),
-    };
+    // Forward Claude's SSE stream directly to the browser
+    return new Response(upstream.body, {
+      headers: {
+        'Content-Type':    'text/event-stream',
+        'Cache-Control':   'no-cache',
+        'X-Accel-Buffering': 'no',
+      },
+    });
 
   } catch (err) {
     console.error('Chat function exception:', err);
-    return {
-      statusCode: 500,
-      body: JSON.stringify({ error: 'Internal server error' }),
-    };
+    return new Response(
+      JSON.stringify({ error: 'Internal server error' }),
+      { status: 500, headers: { 'Content-Type': 'application/json' } }
+    );
   }
 };

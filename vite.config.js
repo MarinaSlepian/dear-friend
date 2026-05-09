@@ -131,6 +131,7 @@ function devApiPlugin(env) {
               body: JSON.stringify({
                 model:      resolvedModel,
                 max_tokens: 512,
+                stream:     true,
                 system: [{
                   type:          'text',
                   text:          systemPrompt,
@@ -148,18 +149,28 @@ function devApiPlugin(env) {
               return;
             }
 
-            const data = await upstream.json();
-            const text = data.content?.[0]?.text;
-            console.log(`[dev-api] ✓ reply (${text?.length ?? 0} chars)`);
-
-            res.writeHead(200, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ text }));
+            // Stream SSE directly to the browser
+            res.writeHead(200, {
+              'Content-Type':    'text/event-stream',
+              'Cache-Control':   'no-cache',
+              'Connection':      'keep-alive',
+              'X-Accel-Buffering': 'no',
+            });
+            const reader = upstream.body.getReader();
+            while (true) {
+              const { done, value } = await reader.read();
+              if (done) break;
+              res.write(value);
+            }
+            res.end();
+            console.log('[dev-api] ✓ stream complete');
 
           } catch (e) {
             console.error('[dev-api] fetch/parse exception:', e.name, e.message);
-            console.error(e.stack);
-            res.writeHead(500, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ error: `${e.name}: ${e.message}` }));
+            if (!res.headersSent) {
+              res.writeHead(500, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ error: `${e.name}: ${e.message}` }));
+            }
           }
         });
       });
