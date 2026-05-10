@@ -16,6 +16,7 @@ export default defineConfig(({ mode }) => {
       react(),
       devApiPlugin(env),
       devTranscribePlugin(env),
+      devTtsPlugin(env),
     ],
   };
 });
@@ -56,6 +57,65 @@ function devTranscribePlugin(env) {
           console.log(`[dev-transcribe] ✓ "${data.text?.slice(0, 60)}"`);
           res.writeHead(upstream.ok ? 200 : 502, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify(upstream.ok ? { text: data.text || '' } : { error: data.error?.message }));
+        });
+      });
+    },
+  };
+}
+
+// ── Dev-only plugin: handles POST /api/tts locally ──────────────────────────
+function devTtsPlugin(env) {
+  return {
+    name: 'dev-tts',
+    apply: 'serve',
+    configureServer(server) {
+      server.middlewares.use('/api/tts', async (req, res) => {
+        if (req.method !== 'POST') { res.writeHead(405); res.end(); return; }
+
+        const apiKey = env.DEAR_FRIEND_OPENAI_KEY;
+        if (!apiKey) {
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'DEAR_FRIEND_OPENAI_KEY not set in .env' }));
+          return;
+        }
+
+        const chunks = [];
+        req.on('data', c => chunks.push(c));
+        req.on('end', async () => {
+          const { text, voice = 'shimmer' } = JSON.parse(Buffer.concat(chunks).toString('utf-8'));
+
+          try {
+            const upstream = await fetch('https://api.openai.com/v1/audio/speech', {
+              method: 'POST',
+              headers: {
+                'Authorization': `Bearer ${apiKey}`,
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({ model: 'tts-1', input: text, voice, response_format: 'mp3' }),
+            });
+
+            if (!upstream.ok) {
+              const errText = await upstream.text().catch(() => '');
+              res.writeHead(502, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ error: errText.slice(0, 200) }));
+              return;
+            }
+
+            res.writeHead(200, { 'Content-Type': 'audio/mpeg' });
+            const reader = upstream.body.getReader();
+            while (true) {
+              const { done, value } = await reader.read();
+              if (done) break;
+              res.write(value);
+            }
+            res.end();
+            console.log(`[dev-tts] ✓ "${text.slice(0, 60)}"`);
+          } catch (e) {
+            if (!res.headersSent) {
+              res.writeHead(500, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ error: e.message }));
+            }
+          }
         });
       });
     },

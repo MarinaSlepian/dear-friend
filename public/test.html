@@ -1,0 +1,490 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>DearFriendAI — Test</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: #FFF8F0;
+      color: #3B2A1A;
+      min-height: 100vh;
+      padding: 24px 16px 48px;
+    }
+
+    .container { max-width: 640px; margin: 0 auto; }
+
+    header {
+      display: flex;
+      align-items: baseline;
+      gap: 12px;
+      margin-bottom: 8px;
+    }
+    h1 { font-size: 28px; font-weight: 700; color: #3B2A1A; }
+    .badge {
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: .08em;
+      background: #E8845A;
+      color: #fff;
+      border-radius: 6px;
+      padding: 2px 8px;
+      vertical-align: middle;
+    }
+    .clock {
+      font-size: 14px;
+      color: #9B8070;
+      margin-bottom: 28px;
+    }
+
+    .card {
+      background: #fff;
+      border-radius: 18px;
+      padding: 24px;
+      margin-bottom: 20px;
+      box-shadow: 0 2px 12px rgba(59,42,26,.08);
+    }
+    .card h2 {
+      font-size: 18px;
+      font-weight: 700;
+      margin-bottom: 16px;
+      color: #3B2A1A;
+    }
+
+    label {
+      display: block;
+      font-size: 13px;
+      font-weight: 600;
+      color: #6B5040;
+      margin-bottom: 4px;
+      margin-top: 12px;
+    }
+    label:first-child { margin-top: 0; }
+
+    textarea, input, select {
+      width: 100%;
+      font-family: inherit;
+      font-size: 15px;
+      color: #3B2A1A;
+      background: #FFF0E0;
+      border: 1.5px solid #D4B89A;
+      border-radius: 10px;
+      padding: 10px 12px;
+      outline: none;
+      transition: border-color .15s;
+      resize: vertical;
+    }
+    textarea:focus, input:focus, select:focus { border-color: #E8845A; }
+    textarea { min-height: 80px; }
+    select { cursor: pointer; }
+
+    .row { display: flex; gap: 10px; align-items: flex-start; flex-wrap: wrap; }
+    .row > * { flex: 1 1 140px; }
+
+    button {
+      font-family: inherit;
+      font-size: 15px;
+      font-weight: 600;
+      border: none;
+      border-radius: 10px;
+      padding: 10px 20px;
+      cursor: pointer;
+      transition: background .15s, opacity .15s;
+    }
+    .btn-primary {
+      background: #E8845A;
+      color: #fff;
+    }
+    .btn-primary:hover:not(:disabled) { background: #D46A42; }
+    .btn-primary:disabled { opacity: .5; cursor: default; }
+
+    .btn-secondary {
+      background: #F0E4D8;
+      color: #6B5040;
+    }
+    .btn-secondary:hover:not(:disabled) { background: #E8D0BC; }
+
+    .btn-sm {
+      font-size: 13px;
+      padding: 6px 14px;
+      border-radius: 8px;
+    }
+
+    .status {
+      margin-top: 10px;
+      font-size: 14px;
+      color: #9B8070;
+      min-height: 20px;
+    }
+    .status.ok  { color: #5A9E6A; }
+    .status.err { color: #C0392B; }
+
+    .context-box {
+      background: #FFF4ED;
+      border: 1px solid #E8D0BC;
+      border-radius: 10px;
+      padding: 10px 14px;
+      font-size: 13px;
+      color: #6B5040;
+      margin-bottom: 14px;
+    }
+    .context-box strong { color: #3B2A1A; }
+
+    .response-box {
+      margin-top: 16px;
+      background: #FFF4ED;
+      border: 1.5px solid #E8D0BC;
+      border-radius: 12px;
+      padding: 14px 16px;
+      font-size: 16px;
+      line-height: 1.6;
+      color: #3B2A1A;
+      white-space: pre-wrap;
+      min-height: 60px;
+    }
+    .response-box.empty { color: #B0987E; font-style: italic; }
+
+    .speak-response-btn {
+      margin-top: 10px;
+    }
+
+    .divider {
+      border: none;
+      border-top: 1.5px solid #E8D0BC;
+      margin: 20px 0;
+    }
+
+    .model-row {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-top: 8px;
+    }
+    .model-btn {
+      font-size: 13px;
+      padding: 6px 14px;
+      border-radius: 8px;
+      border: 1.5px solid #D4B89A;
+      background: #FFF0E0;
+      color: #6B5040;
+      cursor: pointer;
+      transition: all .15s;
+    }
+    .model-btn.active {
+      background: #E8845A;
+      border-color: #E8845A;
+      color: #fff;
+    }
+  </style>
+</head>
+<body>
+<div class="container">
+
+  <header>
+    <h1>DearFriendAI</h1>
+    <span class="badge">TEST</span>
+  </header>
+  <div class="clock" id="clock">—</div>
+
+  <!-- ── TTS Voice Test ─────────────────────────────────────────────────────── -->
+  <div class="card">
+    <h2>🔊 TTS Voice Test</h2>
+
+    <label>Text to speak</label>
+    <textarea id="ttsText">Добрый день! Как вы себя чувствуете сегодня? Я очень рада вас слышать и готова поговорить о чём угодно.</textarea>
+
+    <label>Voice</label>
+    <div class="row" style="margin-bottom:12px">
+      <select id="voiceSelect">
+        <option value="shimmer">shimmer — тёплый, женский (recommended)</option>
+        <option value="nova">nova — живой, женский</option>
+        <option value="alloy">alloy — нейтральный</option>
+        <option value="echo">echo — мужской</option>
+        <option value="fable">fable — мягкий, мужской</option>
+        <option value="onyx">onyx — глубокий, мужской</option>
+      </select>
+    </div>
+
+    <div class="row">
+      <button class="btn-primary" id="speakBtn" onclick="testTTS()">▶ Speak</button>
+      <button class="btn-secondary" onclick="stopAudio()">■ Stop</button>
+    </div>
+
+    <div class="status" id="ttsStatus"></div>
+  </div>
+
+  <!-- ── AI + Time Awareness Test ──────────────────────────────────────────── -->
+  <div class="card">
+    <h2>🤖 AI + Time Awareness</h2>
+
+    <div class="context-box">
+      <strong>Claude sees:</strong> <span id="claudeTime">—</span>
+    </div>
+
+    <label>Name</label>
+    <input id="userName" type="text" value="Зина" placeholder="Name" />
+
+    <label>Language</label>
+    <div class="model-row">
+      <button class="model-btn active" id="langRu" onclick="setLang('ru')">🇷🇺 Русский</button>
+      <button class="model-btn" id="langHe" onclick="setLang('he')">🇮🇱 עברית</button>
+    </div>
+
+    <label style="margin-top:14px">Model</label>
+    <div class="model-row">
+      <button class="model-btn active" id="modelFast" onclick="setModel('claude-haiku-4-5-20251001')">Haiku (fast)</button>
+      <button class="model-btn" id="modelSmart" onclick="setModel('claude-sonnet-4-6')">Sonnet (smart)</button>
+    </div>
+
+    <label style="margin-top:14px">Message</label>
+    <textarea id="aiMessage">Завтра в три часа иду к врачу. А ещё утром звонил сын Миша.</textarea>
+
+    <div class="row" style="margin-top:12px">
+      <button class="btn-primary" id="sendBtn" onclick="sendToAI()">Send →</button>
+      <button class="btn-secondary btn-sm" onclick="clearResponse()">Clear</button>
+    </div>
+
+    <div class="response-box empty" id="aiResponse">Response will appear here…</div>
+    <div id="aiStatus" class="status"></div>
+
+    <button class="btn-secondary btn-sm speak-response-btn" id="speakResponseBtn"
+            onclick="speakResponse()" style="display:none">▶ Speak response</button>
+  </div>
+
+</div>
+
+<script>
+  // ── Clock ──────────────────────────────────────────────────────────────────
+  let currentLang  = 'ru';
+  let currentModel = 'claude-haiku-4-5-20251001';
+
+  function formatDateTime(lang) {
+    const locale = lang === 'he' ? 'he-IL' : 'ru-RU';
+    return new Date().toLocaleString(locale, {
+      weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
+      hour: '2-digit', minute: '2-digit',
+    });
+  }
+
+  function updateClock() {
+    const str = formatDateTime(currentLang);
+    document.getElementById('clock').textContent = str;
+    document.getElementById('claudeTime').textContent = str;
+  }
+
+  updateClock();
+  setInterval(updateClock, 15_000);
+
+  // ── Language / model toggles ──────────────────────────────────────────────
+  function setLang(lang) {
+    currentLang = lang;
+    document.getElementById('langRu').classList.toggle('active', lang === 'ru');
+    document.getElementById('langHe').classList.toggle('active', lang === 'he');
+    updateClock();
+
+    const sampleRu = 'Завтра в три часа иду к врачу. А ещё утром звонил сын Миша.';
+    const sampleHe = 'מחר בשלוש אני הולך לרופא. וגם בבוקר התקשר הבן שלי מיכאל.';
+    document.getElementById('aiMessage').value = lang === 'he' ? sampleHe : sampleRu;
+
+    const ttsSampleRu = 'Добрый день! Как вы себя чувствуете сегодня? Я очень рада вас слышать и готова поговорить о чём угодно.';
+    const ttsSampleHe = 'צהריים טובים! איך אתה מרגיש היום? אני כל כך שמחה לשמוע אותך ומוכנה לדבר על כל דבר.';
+    document.getElementById('ttsText').value = lang === 'he' ? ttsSampleHe : ttsSampleRu;
+  }
+
+  function setModel(model) {
+    currentModel = model;
+    document.getElementById('modelFast').classList.toggle('active', model === 'claude-haiku-4-5-20251001');
+    document.getElementById('modelSmart').classList.toggle('active', model === 'claude-sonnet-4-6');
+  }
+
+  // ── AudioContext ───────────────────────────────────────────────────────────
+  let audioCtx       = null;
+  let currentSource  = null;
+  let lastResponseText = '';
+
+  function getCtx() {
+    if (!audioCtx) audioCtx = new AudioContext();
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+    return audioCtx;
+  }
+
+  function stopAudio() {
+    if (currentSource) {
+      try { currentSource.stop(); } catch {}
+      currentSource = null;
+    }
+    setStatus('ttsStatus', '');
+    document.getElementById('speakBtn').disabled = false;
+  }
+
+  // ── TTS test ───────────────────────────────────────────────────────────────
+  async function testTTS() {
+    const text  = document.getElementById('ttsText').value.trim();
+    const voice = document.getElementById('voiceSelect').value;
+    if (!text) return;
+
+    document.getElementById('speakBtn').disabled = true;
+    setStatus('ttsStatus', 'Fetching audio…');
+
+    try {
+      const ctx = getCtx();
+      const res = await fetch('/api/tts', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ text, voice }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+      const buf     = await res.arrayBuffer();
+      const decoded = await ctx.decodeAudioData(buf);
+
+      stopAudio();
+
+      const source = ctx.createBufferSource();
+      source.buffer = decoded;
+      source.connect(ctx.destination);
+      currentSource = source;
+
+      source.onended = () => {
+        currentSource = null;
+        setStatus('ttsStatus', '✓ Done', 'ok');
+        document.getElementById('speakBtn').disabled = false;
+      };
+
+      source.start();
+      setStatus('ttsStatus', '🔊 Playing…');
+    } catch (err) {
+      setStatus('ttsStatus', '✗ ' + err.message, 'err');
+      document.getElementById('speakBtn').disabled = false;
+    }
+  }
+
+  // ── AI test ────────────────────────────────────────────────────────────────
+  function buildSystemPrompt(name, lang) {
+    const dateTimeStr = formatDateTime(lang);
+    if (lang === 'he') {
+      return `את חברה חמה, סבלנית ואכפתית לאדם מבוגר בשם ${name}. את אישה. דברי רק בעברית. משפטים קצרים. עני בקצרה — 2–4 משפטים. ללא markdown.\n\nתאריך ושעה נוכחיים: ${dateTimeStr}`;
+    }
+    return `Ты — тёплая, заботливая подруга для пожилого человека по имени ${name}. Ты — женщина. Говори только на русском языке. Короткие предложения. Отвечай кратко — 2–4 предложения. Без markdown.\n\nТЕКУЩАЯ ДАТА И ВРЕМЯ: ${dateTimeStr}`;
+  }
+
+  async function sendToAI() {
+    const name    = document.getElementById('userName').value.trim() || 'Зина';
+    const message = document.getElementById('aiMessage').value.trim();
+    if (!message) return;
+
+    const responseEl = document.getElementById('aiResponse');
+    responseEl.className = 'response-box';
+    responseEl.textContent = '';
+    document.getElementById('speakResponseBtn').style.display = 'none';
+    document.getElementById('sendBtn').disabled = true;
+    setStatus('aiStatus', 'Thinking…');
+
+    try {
+      const res = await fetch('/api/chat', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          messages:     [{ role: 'user', content: message }],
+          systemPrompt: buildSystemPrompt(name, currentLang),
+          model:        currentModel,
+        }),
+      });
+
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+      // Parse Anthropic SSE stream
+      const reader  = res.body.getReader();
+      const decoder = new TextDecoder();
+      let sseBuffer = '';
+      let fullText  = '';
+      let eventName = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        sseBuffer += decoder.decode(value, { stream: true });
+        const lines = sseBuffer.split('\n');
+        sseBuffer = lines.pop();
+
+        for (const line of lines) {
+          if (line.startsWith('event: ')) {
+            eventName = line.slice(7).trim();
+            continue;
+          }
+          if (!line.startsWith('data: ')) continue;
+          const data = line.slice(6).trim();
+          if (!data || data === '[DONE]') { eventName = ''; continue; }
+          try {
+            const parsed = JSON.parse(data);
+            if (eventName === 'content_block_delta' && parsed.delta?.type === 'text_delta') {
+              fullText += parsed.delta.text || '';
+              responseEl.textContent = fullText;
+            }
+          } catch {}
+          eventName = '';
+        }
+      }
+
+      lastResponseText = fullText;
+      setStatus('aiStatus', '✓ Done', 'ok');
+      document.getElementById('speakResponseBtn').style.display = 'inline-block';
+    } catch (err) {
+      responseEl.className = 'response-box empty';
+      responseEl.textContent = 'Error: ' + err.message;
+      setStatus('aiStatus', '', 'err');
+    }
+
+    document.getElementById('sendBtn').disabled = false;
+  }
+
+  async function speakResponse() {
+    if (!lastResponseText) return;
+    try {
+      const ctx = getCtx();
+      const res = await fetch('/api/tts', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ text: lastResponseText, voice: 'shimmer' }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const buf     = await res.arrayBuffer();
+      const decoded = await ctx.decodeAudioData(buf);
+      stopAudio();
+      const source = ctx.createBufferSource();
+      source.buffer = decoded;
+      source.connect(ctx.destination);
+      currentSource = source;
+      source.onended = () => { currentSource = null; };
+      source.start();
+    } catch (err) {
+      alert('TTS error: ' + err.message);
+    }
+  }
+
+  function clearResponse() {
+    document.getElementById('aiResponse').className = 'response-box empty';
+    document.getElementById('aiResponse').textContent = 'Response will appear here…';
+    document.getElementById('speakResponseBtn').style.display = 'none';
+    document.getElementById('aiStatus').textContent = '';
+    lastResponseText = '';
+  }
+
+  // ── Helpers ────────────────────────────────────────────────────────────────
+  function setStatus(id, msg, type) {
+    const el = document.getElementById(id);
+    el.textContent = msg;
+    el.className = 'status' + (type ? ' ' + type : '');
+  }
+
+  // Allow Enter in AI message box (Shift+Enter = newline)
+  document.getElementById('aiMessage').addEventListener('keydown', e => {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendToAI(); }
+  });
+</script>
+</body>
+</html>

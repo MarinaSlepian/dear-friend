@@ -39,9 +39,18 @@ export async function sendMessage({ messages, name, language, modelKey, onSenten
   const personalInfo    = loadPersonalInfo();
   const personalContext = buildPersonalContext(personalInfo, language);
 
-  const systemPrompt = language === 'he'
+  const now = new Date();
+  const dateTimeStr = now.toLocaleString(language === 'he' ? 'he-IL' : 'ru-RU', {
+    weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
+    hour: '2-digit', minute: '2-digit',
+  });
+
+  const systemPrompt = (language === 'he'
     ? SYSTEM_PROMPT_HE(name, memoryContext, remindersText, personalContext)
-    : SYSTEM_PROMPT_RU(name, memoryContext, remindersText, personalContext);
+    : SYSTEM_PROMPT_RU(name, memoryContext, remindersText, personalContext))
+    + (language === 'he'
+      ? `\n\nתאריך ושעה נוכחיים: ${dateTimeStr}`
+      : `\n\nТЕКУЩАЯ ДАТА И ВРЕМЯ: ${dateTimeStr}`);
 
   const res = await fetch('/api/chat', {
     method:  'POST',

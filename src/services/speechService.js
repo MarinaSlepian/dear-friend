@@ -2,6 +2,8 @@
 // Replaces browser SpeechRecognition (which fails with `network` errors on
 // production HTTPS due to Chrome routing audio through Google's servers).
 
+import { getAudioContext } from './audioService.js';
+
 export const isSpeechRecognitionSupported = () =>
   Boolean(navigator.mediaDevices?.getUserMedia && window.MediaRecorder);
 
@@ -137,101 +139,68 @@ function blobToBase64(blob) {
   });
 }
 
-// ── SpeechSynthesis (TTS) ─────────────────────────────────────────────────
+// ── TTS via OpenAI (shimmer voice) ────────────────────────────────────────
 
-let voicesCache = null;
+export function preloadVoices() {} // no-op: OpenAI TTS needs no preloading
 
-export function preloadVoices() {
-  if (window.speechSynthesis) loadVoices();
-}
-
-function loadVoices() {
-  return new Promise(resolve => {
-    const v = window.speechSynthesis.getVoices();
-    if (v.length) { voicesCache = v; resolve(v); return; }
-    const handler = () => {
-      voicesCache = window.speechSynthesis.getVoices();
-      resolve(voicesCache);
-    };
-    window.speechSynthesis.addEventListener('voiceschanged', handler, { once: true });
-    setTimeout(() => resolve(window.speechSynthesis.getVoices()), 2000);
-  });
-}
-
-function pickVoice(voices, language) {
-  const langCode   = language === 'he' ? 'he-IL' : 'ru-RU';
-  const langPrefix = language === 'he' ? 'he'    : 'ru';
-
-  const pool = voices.filter(
-    v => v.lang === langCode || v.lang.toLowerCase().startsWith(langPrefix)
-  );
-  if (pool.length === 0) return null;
-
-  const google = pool.find(v => v.name.toLowerCase().includes('google'));
-  if (google) return google;
-
-  const online = pool.find(v => v.localService === false);
-  if (online) return online;
-
-  const preferred = language === 'he'
-    ? ['tamar', 'carmit', 'yoav', 'meital']
-    : ['milena', 'irina', 'katya', 'svetlana', 'александра', 'алена'];
-  const named = pool.find(v => preferred.some(n => v.name.toLowerCase().includes(n)));
-  if (named) return named;
-
-  return pool.find(v => v.lang === langCode) ?? pool[0];
-}
+let currentAbortController = null;
+let currentAudioSource     = null;
 
 export async function speak({ text, language, onEnd, onError }) {
-  if (!text || !window.speechSynthesis) { onEnd?.(); return; }
+  if (!text) { onEnd?.(); return; }
+  stopSpeaking();
 
-  window.speechSynthesis.cancel();
+  const controller = new AbortController();
+  currentAbortController = controller;
 
-  const voices    = voicesCache ?? await loadVoices();
-  const utterance = new SpeechSynthesisUtterance(text);
-  utterance.lang   = language === 'he' ? 'he-IL' : 'ru-RU';
-  utterance.rate   = 0.82;
-  utterance.pitch  = 0.95;
-  utterance.volume = 1.0;
+  try {
+    const res = await fetch('/api/tts', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ text, voice: 'shimmer' }),
+      signal:  controller.signal,
+    });
 
-  const voice = pickVoice(voices, language);
-  if (voice) {
-    utterance.voice = voice;
-    console.log(`[TTS] voice: "${voice.name}" | lang: ${voice.lang} | local: ${voice.localService}`);
-  } else {
-    console.warn('[TTS] no matching voice found, using browser default');
+    if (controller.signal.aborted) return;
+    if (!res.ok) throw new Error(`TTS HTTP ${res.status}`);
+
+    const arrayBuffer = await res.arrayBuffer();
+    if (controller.signal.aborted) return;
+
+    // Use the already-unlocked AudioContext so playback works on iOS too
+    const audioCtx = getAudioContext();
+    if (!audioCtx) throw new Error('AudioContext not ready');
+
+    const decoded = await audioCtx.decodeAudioData(arrayBuffer);
+    if (controller.signal.aborted) return;
+
+    const source = audioCtx.createBufferSource();
+    source.buffer = decoded;
+    source.connect(audioCtx.destination);
+    currentAudioSource = source;
+
+    source.onended = () => {
+      if (currentAudioSource === source) currentAudioSource = null;
+      onEnd?.();
+    };
+
+    source.start();
+    console.log(`[TTS] playing "${text.slice(0, 60)}"`);
+  } catch (err) {
+    if (err.name === 'AbortError') return;
+    console.error('[TTS] error:', err.message);
+    onError?.(err.message);
+    onEnd?.();
   }
-
-  const resumeTimer = setInterval(() => {
-    if (window.speechSynthesis.paused) window.speechSynthesis.resume();
-  }, 8000);
-
-  const wordCount  = text.split(/\s+/).length;
-  const fallbackMs = Math.max(15000, wordCount * 700);
-  let ended = false;
-  const fallbackTimer = setTimeout(() => {
-    if (!ended) { ended = true; clearInterval(resumeTimer); onEnd?.(); }
-  }, fallbackMs);
-
-  utterance.onend = () => {
-    if (ended) return;
-    ended = true;
-    clearInterval(resumeTimer);
-    clearTimeout(fallbackTimer);
-    onEnd?.();
-  };
-  utterance.onerror = e => {
-    if (ended) return;
-    ended = true;
-    clearInterval(resumeTimer);
-    clearTimeout(fallbackTimer);
-    if (e.error !== 'interrupted' && e.error !== 'canceled') onError?.(e.error);
-    onEnd?.();
-  };
-
-  window.speechSynthesis.speak(utterance);
 }
 
 export function stopSpeaking() {
-  window.speechSynthesis?.cancel();
+  if (currentAbortController) {
+    currentAbortController.abort();
+    currentAbortController = null;
+  }
+  if (currentAudioSource) {
+    try { currentAudioSource.stop(); } catch {}
+    currentAudioSource = null;
+  }
 }

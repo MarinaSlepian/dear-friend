@@ -4,6 +4,8 @@
 
 let ctx = null;
 
+export function getAudioContext() { return ctx; }
+
 export function unlockAudio() {
   if (ctx) {
     if (ctx.state === 'suspended') ctx.resume();
